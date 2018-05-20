@@ -61,9 +61,29 @@ function processPPTX(data) {
         "data": slideSize
     });
     
+    //console.log(zip.folder("ppt").folder("fonts").files);
+    
+
+    for (var i=0; i<zip.files.length; i++) {
+        console.log("ok");
+        if(/^ppt\/fonts\/font[0-9]+\.fntdata$/.test(zip.files[i].name)){
+            console.log("kk");
+            var filename = "ppt/fonts/font"+(i+1)+".fntdata";
+            var font = processSingleFont(zip, filename);
+            var cssText = "@font-face {"+
+            "font-family: 'fontName';"+
+            "src: url(data:application/x-font-woff;charset=utf-8;base64,"+font+");"+
+            "font-weight: normal;"+
+            "font-style: normal;"+
+            "}";
+            console.log(cssText);
+        }
+        
+    }
+    
     var numOfSlides = filesInfo["slides"].length;
     for (var i=0; i<numOfSlides; i++) {
-        var filename = filesInfo["slides"][i];
+        var filename = "ppt/slides/slide"+(i+1)+".xml";
         var slideHtml = processSingleSlide(zip, filename, i, slideSize);
         self.postMessage({
             "type": "slide",
@@ -146,6 +166,12 @@ function loadTheme(zip) {
     return readXmlFile(zip, "ppt/" + themeURI);
 }
 
+function processSingleFont(zip, fontFileName) {
+    var resContent = zip.file(fontFileName).asArrayBuffer();
+
+    return resContent;
+}
+
 function processSingleSlide(zip, sldFileName, index, slideSize) {
     
     self.postMessage({
@@ -160,6 +186,7 @@ function processSingleSlide(zip, sldFileName, index, slideSize) {
     var resName = sldFileName.replace("slides/slide", "slides/_rels/slide") + ".rels";
     var resContent = readXmlFile(zip, resName);
     var RelationshipArray = resContent["Relationships"]["Relationship"];
+    
     var layoutFilename = "";
     var slideResObj = {};
     if (RelationshipArray.constructor === Array) {
@@ -177,15 +204,17 @@ function processSingleSlide(zip, sldFileName, index, slideSize) {
                         "type": RelationshipArray[i]["attrs"]["Type"].replace("http://schemas.openxmlformats.org/officeDocument/2006/relationships/", ""),
                         "target": RelationshipArray[i]["attrs"]["Target"].replace("../", "ppt/")
                     };
+   
             }
         }
     } else {
         layoutFilename = RelationshipArray["attrs"]["Target"].replace("../", "ppt/");
     }
-    
+    //console.log(index, sldFileName, resName, RelationshipArray); 
     // Open slideLayoutXX.xml
     var slideLayoutContent = readXmlFile(zip, layoutFilename);
     var slideLayoutTables = indexNodes(slideLayoutContent);
+    console.log(slideLayoutTables);
     //debug(slideLayoutTables);
     
     // =====< Step 2 >=====
@@ -218,6 +247,7 @@ function processSingleSlide(zip, sldFileName, index, slideSize) {
     // =====< Step 3 >=====
     var slideContent = readXmlFile(zip, sldFileName);
     var nodes = slideContent["p:sld"]["p:cSld"]["p:spTree"];
+    //console.log(slideResObj);
     var warpObj = {
         "zip": zip,
         "slideLayoutTables": slideLayoutTables,
@@ -225,12 +255,23 @@ function processSingleSlide(zip, sldFileName, index, slideSize) {
         "slideResObj": slideResObj,
         "slideMasterTextStyles": slideMasterTextStyles
     };
+    //console.log(warpObj);
     
     var bgColor = getSlideBackgroundFill(slideContent, slideLayoutContent, slideMasterContent);
-    
-    var result = "<section style='width:" + slideSize.width + "px; height:" + slideSize.height + "px; background-color: #" + bgColor + "'>"
-    
+    var bgImage = getSlideImageBackground(slideContent, slideLayoutContent, slideMasterContent, warpObj);
+    var result = "<section style='width:" + slideSize.width + "px; height:" + slideSize.height + "px; background-color: #" + bgColor + ";"+bgImage+";'>"
+    nodes = slideLayoutContent["p:sldLayout"]["p:cSld"]["p:spTree"];
     for (var nodeKey in nodes) {
+        if (nodes[nodeKey].constructor === Array) {
+            for (var i=0; i<nodes[nodeKey].length; i++) {
+                result += processNodesInSlide(nodeKey, nodes[nodeKey][i], warpObj);
+            }
+        } else {
+            result += processNodesInSlide(nodeKey, nodes[nodeKey], warpObj);
+        }
+    }
+    nodes = slideContent["p:sld"]["p:cSld"]["p:spTree"];
+    for (var nodeKey in nodes) { //nodes
         if (nodes[nodeKey].constructor === Array) {
             for (var i=0; i<nodes[nodeKey].length; i++) {
                 result += processNodesInSlide(nodeKey, nodes[nodeKey][i], warpObj);
@@ -475,7 +516,7 @@ function genShape(node, slideLayoutSpNode, slideMasterSpNode, id, name, idx, typ
         }
         
         switch (shapType) {
-            case "accentBorderCallout1":
+            /*case "accentBorderCallout1":
             case "accentBorderCallout2":
             case "accentBorderCallout3":
             case "accentCallout1":
@@ -628,7 +669,7 @@ function genShape(node, slideLayoutSpNode, slideMasterSpNode, id, name, idx, typ
             case "wave":
             case "wedgeEllipseCallout":
             case "wedgeRectCallout":
-            case "wedgeRoundRectCallout":
+            case "wedgeRoundRectCallout":*/
             case "rect":
                 result += "<rect x='0' y='0' width='" + w + "' height='" + h + "' fill='" + fillColor + 
                             "' stroke='" + border.color + "' stroke-width='" + border.width + "' stroke-dasharray='" + border.strokeDasharray + "' />";
@@ -658,14 +699,14 @@ function genShape(node, slideLayoutSpNode, slideMasterSpNode, id, name, idx, typ
                 }
                 result += "/>";
                 break;
-            case "line":
+            /*case "line":
             case "straightConnector1":
             case "bentConnector3":
             case "bentConnector4":
             case "bentConnector5":
             case "curvedConnector2":
             case "curvedConnector3":
-            case "curvedConnector4":
+            case "curvedConnector4":*/
             case "curvedConnector5":
                 if (isFlipV) {
                     result += "<line x1='" + w + "' y1='0' x2='0' y2='" + h + "' stroke='" + border.color + 
@@ -694,7 +735,7 @@ function genShape(node, slideLayoutSpNode, slideMasterSpNode, id, name, idx, typ
                                 "' stroke-width='" + (w/2) + "' stroke-dasharray='" + border.strokeDasharray + "' ";
                 result += "marker-end='url(#markerTriangle)' />";
                 break;
-            case "bentArrow":
+            /*case "bentArrow":
             case "bentUpArrow":
             case "stripedRightArrow":
             case "quadArrow":
@@ -715,10 +756,10 @@ function genShape(node, slideLayoutSpNode, slideMasterSpNode, id, name, idx, typ
             case "leftRightCircularArrow":
                 break;
             case "triangle":
-                break;
+                break;*/
             case undefined:
             default:
-                console.warn("Undefine shape type.");
+                console.warn("Undefine shape type."+shapType);
         }
         
         result += "</svg>";
@@ -768,6 +809,7 @@ function processPicNode(node, warpObj) {
     
     var rid = node["p:blipFill"]["a:blip"]["attrs"]["r:embed"];
     var imgName = warpObj["slideResObj"][rid]["target"];
+    //console.log(rid, imgName);
     var imgFileExt = extractFileExtension(imgName).toLowerCase();
     var zip = warpObj["zip"];
     var imgArrayBuffer = zip.file(imgName).asArrayBuffer();
@@ -918,6 +960,7 @@ function genBuChar(node) {
                 marginRight = 0;
             }
             var typeface = buFontAttrs["typeface"];
+            console.log(typeface);
             
             return "<span style='font-family: " + typeface + 
                     "; margin-left: " + marginLeft * lvl + "px" +
@@ -987,6 +1030,7 @@ function genGlobalCSS() {
     for (var key in styleTable) {
         cssText += "section ." + styleTable[key]["name"] + "{" + styleTable[key]["text"] + "}\n";
     }
+    //console.log(cssText);
     return cssText;
 }
 
@@ -1425,6 +1469,7 @@ function getBorder(node, isSvgMode) {
 
 function getSlideBackgroundFill(slideContent, slideLayoutContent, slideMasterContent) {
     var bgColor = getSolidFill( getTextByPathList(slideContent, ["p:sld", "p:cSld", "p:bg", "p:bgPr", "a:solidFill"]) );
+    
     if (bgColor === undefined) {
         bgColor = getSolidFill( getTextByPathList(slideLayoutContent, ["p:sldLayout", "p:cSld", "p:bg", "p:bgPr", "a:solidFill"]) );
         if (bgColor === undefined) {
@@ -1435,6 +1480,44 @@ function getSlideBackgroundFill(slideContent, slideLayoutContent, slideMasterCon
         }
     }
     return bgColor;
+}
+
+function getSlideImageBackground(slideContent, slideLayoutContent, slideMasterContent, warpObj) {
+    var bgImage = getTextByPathList(slideContent, ["p:sld","p:cSld","p:bg","p:bgPr","a:blipFill","a:blip"]);
+    if(bgImage !== undefined){
+        var rid = getTextByPathList(bgImage,["attrs","r:embed"]);
+        console.log(rid);
+        var imgName = warpObj["slideResObj"][rid]["target"];
+        var imgFileExt = extractFileExtension(imgName).toLowerCase();
+        var zip = warpObj["zip"];
+        var imgArrayBuffer = zip.file(imgName).asArrayBuffer();
+        var mimeType = "";
+        //var xfrmNode = node["p:spPr"]["a:xfrm"];
+        switch (imgFileExt) {
+            case "jpg":
+            case "jpeg":
+                mimeType = "image/jpeg";
+                break;
+            case "png":
+                mimeType = "image/png";
+                break;
+            case "gif":
+                mimeType = "image/gif";
+                break;
+            case "emf": // Not native support
+                mimeType = "image/x-emf";
+                break;
+            case "wmf": // Not native support
+                mimeType = "image/x-wmf";
+                break;
+            default:
+                mimeType = "image/*";
+        }
+        return "background :" +
+                "url(data:"+ mimeType + ";base64," + base64ArrayBuffer(imgArrayBuffer)+")";
+
+    }
+    return "";
 }
 
 function getShapeFill(node, isSvgMode) {
